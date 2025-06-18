@@ -2,16 +2,19 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"gorm.io/gorm"
   	"gorm.io/driver/mysql"
 )
 
-func Connect()  {
-	const dsn string = "root:@tcp(127.0.0.1:3306)/go_api?charset=utf8mb4&parseTime=True&loc=Local"
+var DB *gorm.DB
 
-	_, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	
+func ConnectDB()  {
+	db, err := gorm.Open(mysql.Open(os.Getenv("DB_URL")), &gorm.Config{})
+
 	if err != nil {
-		panic(fmt.Sprintf("failed to connect database: %v", err))
+		panic(fmt.Sprintf("failed to connect to database: %v", err))
 	}
+
+	DB = db
 }

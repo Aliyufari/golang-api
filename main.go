@@ -2,18 +2,27 @@ package main
 
 import(
 	"log"
+	"os" 
 	"go-api/config"
+	"go-api/helpers"
+	"go-api/routes"
 	"github.com/gofiber/fiber/v2"
 )
 
-func main()  {
-	config.Connect()
+func init(){
+	helpers.LoadEnv()
+	config.ConnectDB()
+}
 
+func main()  {
 	app := fiber.New()
 
-    app.Get("/", func (ctx *fiber.Ctx) error {
-        return ctx.SendString("Hello world!")
-    })
+    routes.AuthRoutes(app)
 
-    log.Fatal(app.Listen(":8000"))
+	port := os.Getenv("PORT")
+	if port == ""{
+		port = "8000"
+	}
+
+    log.Fatal(app.Listen(":" + port))
 }
