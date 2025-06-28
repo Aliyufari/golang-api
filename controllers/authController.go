@@ -1,97 +1,93 @@
 package controllers
 
 import (
-	"fmt"
 	"go-api/config"
 	"go-api/helpers"
 	"go-api/models"
-	"strings"
+	"go-api/requests"
+	"log"
+	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func Register(ctx *fiber.Ctx) error {
-	data := new(models.User)
-	if err := ctx.BodyParser(data); err != nil {
-		return helpers.Error(
-			ctx,
-			fiber.StatusBadRequest,
-			"Invalid request body",
-			err,
-		)
+func Register(ctx *fiber.Ctx) (err error) { // <== named return value
+	req := ctx.Locals("validated").(requests.CreateUserRequest)
+
+	var user models.User
+	if err = config.DB.Where("email = ?", req.Email).First(&user).Error; err == nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusBadRequest, "BAD REQUEST", "Email already exists", nil)
 	}
 
-	if errors := helpers.Validate(data); errors != nil {
-		return helpers.Error(
-			ctx,
-			fiber.StatusBadRequest,
-			"Validation failed",
-			errors,
-		)
-	}
-
-	file, _ := ctx.FormFile("avatar")
-	fileExt := strings.ToLower(strings.Split(file.Filename, ".")[1])
-	allowedExtensions := map[string]bool{"jpg": true, "jpeg": true, "png": true, "gif": true}
-	if !allowedExtensions[fileExt] {
-		return helpers.Error(
-			ctx,
-			fiber.StatusBadRequest,
-			"Invalid file type. Only jpg, jpeg, png, and gif are allowed",
-			nil,
-		)
-	}
-	fileName := strings.Replace(uuid.New().String(), "-", "", -1)
-	userAvatar := fmt.Sprintf("%s.%s", fileName, fileExt)
-
-	if err := ctx.SaveFile(file, fmt.Sprintf("./public/avatars/%s", userAvatar)); err != nil {
-		return helpers.Error(
-			ctx,
-			fiber.StatusBadRequest,
-			"Failed to save avatar",
-			nil,
-		)
-	}
-
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(data.Password), 14)
+	userAvatar, fullPath, err := helpers.SaveAvatar(ctx, "avatar", 2*1024*1024, "./public/avatars")
 	if err != nil {
-		return helpers.Error(
-			ctx,
-			fiber.StatusBadRequest,
-			"Could not hash password",
-			nil,
-		)
+		log.Println("Avatar upload error:", err)
+		return helpers.ErrorResponse(ctx, fiber.StatusBadRequest, "BAD REQUEST", "Could not save avatar", nil)
 	}
 
-	user := models.User{
+	defer func() {
+		if err != nil {
+			_ = os.Remove(fullPath)
+		}
+	}()
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Println("Password hashing failed:", err)
+		return helpers.ErrorResponse(ctx, fiber.StatusInternalServerError, "ERROR", "Could not hash password!", nil)
+	}
+
+	newUser := models.User{
 		Avatar:   userAvatar,
-		Name:     data.Name,
-		Email:    data.Email,
-		Dob:      data.Dob,
-		Gender:   data.Gender,
+		Name:     req.Name,
+		Email:    req.Email,
+		Dob:      req.Dob,
+		Gender:   req.Gender,
 		Password: string(hashedPassword),
 	}
 
-	if err := config.DB.Create(&user); err != nil {
-		return helpers.Error(
-			ctx,
-			fiber.StatusInternalServerError,
-			"An error occured",
-			nil,
-		)
+	if err = config.DB.Create(&newUser).Error; err != nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusInternalServerError, "INTERNAL SERVER ERROR", "Could not create user", nil)
 	}
 
-	return helpers.Success(
-		ctx,
-		fiber.StatusCreated,
-		"User created successfully",
-		"user",
-		user,
-	)
+	// prevent defer from deleting the file
+	err = nil
+	return helpers.SuccessResponse(ctx, fiber.StatusCreated, "CREATED", "User created successfully", "user", newUser)
 }
 
 func Login(ctx *fiber.Ctx) error {
-	return ctx.SendString("Login endpoint hit")
+	req := ctx.Locals("validated").(requests.LoginUserRequest)
+
+	var user models.User
+	result := config.DB.First(&user, "email = ?", req.Email)
+	if result.Error != nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusBadRequest, "BAD REQUEST", "Invalid Credentials", nil)
+	}
+
+	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password))
+	if err != nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusBadRequest, "BAD REQUEST", "Invalid Credentials", nil)
+	}
+
+	jwt := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": user.ID.String(),
+		"exp": time.Now().Add(time.Hour * 5).Unix(),
+	})
+
+	secret := os.Getenv("JWT_SECRET")
+	token, err := jwt.SignedString([]byte(secret))
+	if err != nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusInternalServerError, "BAD REQUEST", "A erro occured", nil)
+	}
+
+	return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
+		"status_code": fiber.StatusOK,
+		"status":      "SUCCESS",
+		"message":     "Login successful",
+		"user":        user,
+		"token":       token,
+	})
 }
