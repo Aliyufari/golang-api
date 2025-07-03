@@ -2,20 +2,21 @@ package controllers
 
 import (
 	"go-api/config"
+	"go-api/dtos"
 	"go-api/helpers"
 	"go-api/models"
-	"go-api/requests"
 	"log"
 	"os"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 func Register(ctx *fiber.Ctx) (err error) { // <== named return value
-	req := ctx.Locals("validated").(requests.CreateUserRequest)
+	req := ctx.Locals("validated").(dtos.CreateUserRequest)
 
 	var user models.User
 	if err = config.DB.Where("email = ?", req.Email).First(&user).Error; err == nil {
@@ -40,6 +41,11 @@ func Register(ctx *fiber.Ctx) (err error) { // <== named return value
 		return helpers.ErrorResponse(ctx, fiber.StatusInternalServerError, "ERROR", "Could not hash password!", nil)
 	}
 
+	var role models.Role
+	if err = config.DB.Where("name = ?", "user").First(&role).Error; err == nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusNotFound, "NOT FOUND", "Role Not Found", nil)
+	}
+
 	newUser := models.User{
 		Avatar:   userAvatar,
 		Name:     req.Name,
@@ -47,19 +53,30 @@ func Register(ctx *fiber.Ctx) (err error) { // <== named return value
 		Dob:      req.Dob,
 		Gender:   req.Gender,
 		Password: string(hashedPassword),
+		RoleID:   role.ID,
 	}
 
 	if err = config.DB.Create(&newUser).Error; err != nil {
 		return helpers.ErrorResponse(ctx, fiber.StatusInternalServerError, "INTERNAL SERVER ERROR", "Could not create user", nil)
 	}
 
+	response := dtos.UserResponse{
+		ID:     user.ID,
+		Avatar: userAvatar,
+		Name:   req.Name,
+		Email:  req.Email,
+		Dob:    req.Dob,
+		Gender: req.Gender,
+		Role:   role.Name,
+	}
+
 	// prevent defer from deleting the file
 	err = nil
-	return helpers.SuccessResponse(ctx, fiber.StatusCreated, "CREATED", "User created successfully", "user", newUser)
+	return helpers.SuccessResponse(ctx, fiber.StatusCreated, "CREATED", "User created successfully", "user", response)
 }
 
 func Login(ctx *fiber.Ctx) error {
-	req := ctx.Locals("validated").(requests.LoginUserRequest)
+	req := ctx.Locals("validated").(dtos.LoginUserRequest)
 
 	var user models.User
 	result := config.DB.First(&user, "email = ?", req.Email)
@@ -83,11 +100,61 @@ func Login(ctx *fiber.Ctx) error {
 		return helpers.ErrorResponse(ctx, fiber.StatusInternalServerError, "BAD REQUEST", "A erro occured", nil)
 	}
 
+	var role models.Role
+	if err = config.DB.Where("id = ?", user.RoleID).First(&role).Error; err == nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusNotFound, "NOT FOUND", "Role Not Found", nil)
+	}
+
+	response := dtos.UserResponse{
+		ID:     user.ID,
+		Avatar: user.Avatar,
+		Name:   user.Name,
+		Email:  user.Email,
+		Dob:    user.Dob,
+		Gender: user.Gender,
+		Role:   role.Name,
+	}
+
 	return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
 		"status_code": fiber.StatusOK,
-		"status":      "SUCCESS",
+		"status":      "OK",
 		"message":     "Login successful",
-		"user":        user,
+		"user":        response,
 		"token":       token,
 	})
+}
+
+func Me(ctx *fiber.Ctx) error {
+	authUser, ok := ctx.Locals("user").(*models.User)
+	if !ok || authUser.ID == uuid.Nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusNotFound, "NOT FOUND", "User Not Found", nil)
+	}
+
+	var user models.User
+	if err := config.DB.Preload("Role").First(&user, "id = ?", authUser.ID).Error; err != nil {
+		return helpers.ErrorResponse(ctx, fiber.StatusNotFound, "NOT FOUND", "User Not Found", err)
+	}
+
+	response := dtos.UserResponse{
+		ID:     user.ID,
+		Avatar: user.Avatar,
+		Name:   user.Name,
+		Email:  user.Email,
+		Dob:    user.Dob,
+		Gender: user.Gender,
+		Role:   user.Role.Name,
+	}
+
+	return helpers.SuccessResponse(ctx, fiber.StatusOK, "OK", "User retreived", "user", response)
+}
+
+func UpdateMe(ctx *fiber.Ctx) error {
+	req := ctx.Locals("validated").(dtos.UpdateProfileRequest)
+
+	return req
+
+}
+
+func UpdateMyPassword(ctx *fiber.Ctx) error {
+	return nil
 }

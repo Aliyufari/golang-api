@@ -15,6 +15,8 @@ type User struct {
 	Dob       string    `json:"dob"`
 	Gender    string    `json:"gender"`
 	Password  string    `json:"-"`
+	RoleID    uuid.UUID `gorm:"type:uuid" json:"role_id"`
+	Role      Role      `gorm:"foreignKey:RoleID" json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

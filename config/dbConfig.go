@@ -22,8 +22,9 @@ func ConnectDB() {
 	}
 
 	err = db.AutoMigrate(
+		&models.Permission{},
+		&models.Role{},
 		&models.User{},
-		// &models.Post{},
 	)
 
 	if err != nil {

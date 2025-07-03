@@ -4,6 +4,7 @@ import (
 	"go-api/config"
 	"go-api/helpers"
 	"go-api/routes"
+	"go-api/seeders"
 	"log"
 	"os"
 
@@ -14,6 +15,11 @@ import (
 func init() {
 	helpers.LoadEnv()
 	config.ConnectDB()
+
+	//Seed Roles & Permissions
+	if err := seeders.SeedRolesAndPermissions(config.DB); err != nil {
+		panic(err)
+	}
 }
 
 func main() {
